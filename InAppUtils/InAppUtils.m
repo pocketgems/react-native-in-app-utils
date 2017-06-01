@@ -198,6 +198,76 @@ RCT_EXPORT_METHOD(receiptData:(RCTResponseSenderBlock)callback)
     }
 }
 
+static NSDictionary *subscriptionDetails(SKProduct *item) {
+    NSNumberFormatter *numberFormatter = [[NSNumberFormatter alloc] init];
+    numberFormatter.numberStyle = NSNumberFormatterCurrencyStyle;
+    numberFormatter.locale = item.priceLocale;
+    
+    NSDecimalNumber *price = item.price;
+    NSString *priceString = item.priceString;
+    
+    NSDecimalNumber *weeksInAMonth = (NSDecimalNumber*)[NSDecimalNumber numberWithInt:4];
+    NSDecimalNumber *monthsInAYear = (NSDecimalNumber*)[NSDecimalNumber numberWithInt:12];
+    NSDecimalNumber *weeksInAYear = (NSDecimalNumber*)[NSDecimalNumber numberWithInt:52];
+    
+    BOOL gotDetails = NO;
+    NSDecimalNumber *weeklyPrice, *monthlyPrice, *yearlyPrice;
+    NSString *weeklyPriceString, *monthlyPriceString, *yearlyPriceString;
+    
+    if ([item.productIdentifier containsString:@"week"]) {
+        gotDetails = YES;
+        
+        weeklyPrice = price;
+        weeklyPriceString = priceString;
+        
+        monthlyPrice = [price decimalNumberByMultiplyingBy:weeksInAMonth];
+        monthlyPriceString = [numberFormatter stringFromNumber:monthlyPrice];
+        
+        yearlyPrice = [price decimalNumberByMultiplyingBy:weeksInAYear];
+        yearlyPriceString = [numberFormatter stringFromNumber:yearlyPrice];
+    } else if ([item.productIdentifier containsString:@"month"]) {
+        gotDetails = YES;
+        
+        weeklyPrice = [price decimalNumberByDividingBy:weeksInAMonth];
+        weeklyPriceString = [numberFormatter stringFromNumber:weeklyPrice];
+        
+        monthlyPrice = price;
+        monthlyPriceString = priceString;
+        
+        yearlyPrice = [price decimalNumberByMultiplyingBy:monthsInAYear];
+        yearlyPriceString = [numberFormatter stringFromNumber:yearlyPrice];
+    } else if ([item.productIdentifier containsString:@"year"]) {
+        gotDetails = YES;
+        
+        weeklyPrice = [price decimalNumberByDividingBy:weeksInAYear];
+        weeklyPriceString = [numberFormatter stringFromNumber:weeklyPrice];
+        
+        monthlyPrice = [price decimalNumberByDividingBy:monthsInAYear];
+        monthlyPriceString = [numberFormatter stringFromNumber:monthlyPrice];
+        
+        yearlyPrice = price;
+        yearlyPriceString = priceString;
+    }
+    
+    if (gotDetails) {
+        return @{
+            @"weeklyPrice": weeklyPrice,
+            @"weeklyPriceString": weeklyPriceString,
+            @"monthlyPrice": monthlyPrice,
+            @"monthlyPriceString": monthlyPriceString,
+            @"yearlyPrice": yearlyPrice,
+            @"yearlyPriceString": yearlyPriceString
+        };
+    }
+    return nil;
+}
+
+static NSDictionary *mergeDictionaries(NSDictionary *a, NSDictionary *b) {
+    NSMutableDictionary *merged = [[NSMutableDictionary alloc] initWithDictionary:a];
+    [merged addEntriesFromDictionary:b];
+    return merged;
+}
+
 - (void)productsRequest:(SKProductsRequest *)request
      didReceiveResponse:(SKProductsResponse *)response
 {
@@ -217,6 +287,12 @@ RCT_EXPORT_METHOD(receiptData:(RCTResponseSenderBlock)callback)
                                       @"description": item.localizedDescription ? item.localizedDescription : @"",
                                       @"title": item.localizedTitle ? item.localizedTitle : @"",
                                       };
+            
+            NSDictionary *subscription = subscriptionDetails(item);
+            if (subscription) {
+                product = mergeDictionaries(product, subscription);
+            }
+            
             [productsArrayForJS addObject:product];
         }
         callback(@[[NSNull null], productsArrayForJS]);
