@@ -6,17 +6,25 @@
 
 @implementation InAppUtils
 {
+    BOOL _addedTranscationObserver;
     NSArray *products;
     NSMutableDictionary *_callbacks;
+    RCTResponseSenderBlock _queuedPurchaseCallback;
 }
 
 - (instancetype)init
 {
     if ((self = [super init])) {
         _callbacks = [[NSMutableDictionary alloc] init];
-        [[SKPaymentQueue defaultQueue] addTransactionObserver:self];
     }
     return self;
+}
+
+- (void)dealloc
+{
+    if (_addedTranscationObserver) {
+        [[SKPaymentQueue defaultQueue] removeTransactionObserver:self];
+    }
 }
 
 - (dispatch_queue_t)methodQueue
@@ -26,17 +34,39 @@
 
 RCT_EXPORT_MODULE()
 
+- (void)addTransactionObserverIfRequired
+{
+    if (!_addedTranscationObserver) {
+        _addedTranscationObserver = YES;
+        [[SKPaymentQueue defaultQueue] addTransactionObserver:self];
+    }
+}
+
+RCT_EXPORT_METHOD(setQueuedPurchaseHandler:(RCTResponseSenderBlock)callback)
+{
+    _queuedPurchaseCallback = callback;
+    [self addTransactionObserverIfRequired];
+}
+
 - (void)paymentQueue:(SKPaymentQueue *)queue
  updatedTransactions:(NSArray *)transactions
 {
+    [self addTransactionObserverIfRequired];
+    
     for (SKPaymentTransaction *transaction in transactions) {
         switch (transaction.transactionState) {
             case SKPaymentTransactionStateFailed: {
                 NSString *key = RCTKeyForInstance(transaction.payment.productIdentifier);
                 RCTResponseSenderBlock callback = _callbacks[key];
                 if (callback) {
-                    callback(@[RCTJSErrorFromNSError(transaction.error)]);
                     [_callbacks removeObjectForKey:key];
+                } else {
+                    callback = _queuedPurchaseCallback;
+                    _queuedPurchaseCallback = nil;
+                }
+                
+                if (callback) {
+                    callback(@[RCTJSErrorFromNSError(transaction.error)]);
                 } else {
                     RCTLogWarn(@"No callback registered for transaction with state failed.");
                 }
@@ -47,6 +77,13 @@ RCT_EXPORT_MODULE()
                 NSString *key = RCTKeyForInstance(transaction.payment.productIdentifier);
                 RCTResponseSenderBlock callback = _callbacks[key];
                 if (callback) {
+                    [_callbacks removeObjectForKey:key];
+                } else {
+                    callback = _queuedPurchaseCallback;
+                    _queuedPurchaseCallback = nil;
+                }
+                
+                if (callback) {
                     NSDictionary *purchase = @{
                                               @"transactionDate": @(transaction.transactionDate.timeIntervalSince1970 * 1000),
                                               @"transactionIdentifier": transaction.transactionIdentifier,
@@ -54,7 +91,6 @@ RCT_EXPORT_MODULE()
                                               @"transactionReceipt": [[transaction transactionReceipt] base64EncodedStringWithOptions:0]
                                               };
                     callback(@[[NSNull null], purchase]);
-                    [_callbacks removeObjectForKey:key];
                 } else {
                     RCTLogWarn(@"No callback registered for transaction with state purchased.");
                 }
@@ -97,13 +133,12 @@ RCT_EXPORT_METHOD(purchaseProduct:(NSString *)productIdentifier
     }
 }
 
-- (void)paymentQueue:(SKPaymentQueue *)queue
-restoreCompletedTransactionsFailedWithError:(NSError *)error
+- (void)paymentQueue:(SKPaymentQueue *)queue restoreCompletedTransactionsFailedWithError:(NSError *)error
 {
     NSString *key = RCTKeyForInstance(@"restoreRequest");
     RCTResponseSenderBlock callback = _callbacks[key];
     if (callback) {
-        callback(@[@"restore_failed"]);
+        callback(@[RCTJSErrorFromNSError(error)]);
         [_callbacks removeObjectForKey:key];
     } else {
         RCTLogWarn(@"No callback registered for restore product request.");
@@ -300,11 +335,6 @@ static NSDictionary *mergeDictionaries(NSDictionary *a, NSDictionary *b) {
     } else {
         RCTLogWarn(@"No callback registered for load product request.");
     }
-}
-
-- (void)dealloc
-{
-    [[SKPaymentQueue defaultQueue] removeTransactionObserver:self];
 }
 
 #pragma mark Private
